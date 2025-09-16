@@ -102,7 +102,7 @@ if user_input or image_bytes:
         prompt = f"You are a study coach. Summarize and review:\n{query_text}\n\nReference notes:\n{context}"
 
     with st.spinner("⏳ Thinking..."):
-    reply = call_gemini(prompt, image_bytes=image_bytes)
+         reply = call_gemini(prompt, image_bytes=image_bytes)
 
     st.session_state.chat_history.append(("Bot", reply))
 
