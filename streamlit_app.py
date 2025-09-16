@@ -15,17 +15,22 @@ st.title("📚 ChatGPT Study Mode Clone (Gemini)")
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
+# Clear chat button
+if st.button("🗑️ Clear Chat"):
+    st.session_state.chat_history = []
+
 # Study mode selector
 mode = st.radio(
     "Choose a study mode:",
-    ["Explain", "Quiz", "Review"]
+    ["Explain", "Quiz", "Review"],
+    horizontal=True
 )
 
 # Chat input
 user_input = st.chat_input("Type your question or topic...")
 
 if user_input:
-    # Add user input to history
+    # Add user input
     st.session_state.chat_history.append(("You", user_input))
 
     # Build the prompt depending on mode
@@ -43,13 +48,20 @@ if user_input:
     except Exception as e:
         bot_reply = f"⚠️ Error: {e}"
 
-    # Add bot reply to history
+    # Add bot reply
     st.session_state.chat_history.append(("Bot", bot_reply))
 
-# Display chat
+# Display chat with bubbles
 for role, msg in st.session_state.chat_history:
     if role == "You":
-        st.markdown(f"**{role}:** {msg}")
+        st.markdown(
+            f"<div style='text-align:right; background-color:#DCF8C6; padding:8px; border-radius:10px; margin:5px;'>"
+            f"<b>{role}:</b> {msg}</div>",
+            unsafe_allow_html=True
+        )
     else:
-        st.markdown(f"{role}: {msg}")
-
+        st.markdown(
+            f"<div style='text-align:left; background-color:#F1F0F0; padding:8px; border-radius:10px; margin:5px;'>"
+            f"<b>{role}:</b> {msg}</div>",
+            unsafe_allow_html=True
+        )
