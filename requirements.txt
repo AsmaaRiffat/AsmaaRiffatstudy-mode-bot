@@ -1,2 +1,5 @@
 streamlit
-google-generativeai
+google-genai
+pdfplumber
+python-docx
+Pillow
