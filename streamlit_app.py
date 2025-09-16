@@ -1,109 +1,130 @@
+# streamlit_app.py
 import streamlit as st
-import google.generativeai as genai
 import os
+import io
 from PIL import Image
 
-# Configure Gemini API key
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-1.5-flash")
+# new GenAI SDK
+from google import genai
+from google.genai import types
 
-st.title("📚 ChatGPT Study Mode Clone (Gemini)")
+# text extraction helpers
+import pdfplumber
+from docx import Document
 
-# --- Session State ---
+# ---- Setup client ----
+API_KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+if not API_KEY:
+    st.error("No GEMINI_API_KEY found. Add it in Streamlit Secrets (GEMINI_API_KEY).")
+    st.stop()
+
+# create genai client (works for Gemini Developer API / Vertex as appropriate)
+client = genai.Client(api_key=API_KEY)
+MODEL_ID = "gemini-1.5-flash"  # change if you want another Gemini model
+
+st.title("📚 Study Mode (Gemini) — PDF, DOCX, Image support")
+
+# session state
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "file_content" not in st.session_state:
     st.session_state.file_content = ""
 
-# --- File Upload (Text Notes) ---
-uploaded_file = st.file_uploader("📂 Upload your study notes (.txt, .pdf, .docx)", type=["txt", "pdf", "docx"])
+# --- Upload notes (txt / pdf / docx) ---
+uploaded_file = st.file_uploader("Upload notes (.txt, .pdf, .docx)", type=["txt", "pdf", "docx"])
 if uploaded_file is not None:
-    if uploaded_file.type == "text/plain":
-        st.session_state.file_content = uploaded_file.read().decode("utf-8")
+    try:
+        file_bytes = uploaded_file.read()
+        mime = uploaded_file.type or ""
+        if "pdf" in mime or uploaded_file.name.lower().endswith(".pdf"):
+            # robust PDF extraction with pdfplumber
+            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+                pages = [p.extract_text() or "" for p in pdf.pages]
+            text = "\n\n".join(pages).strip()
+        elif "plain" in mime or uploaded_file.name.lower().endswith(".txt"):
+            text = file_bytes.decode("utf-8", errors="ignore")
+        else:  # docx
+            doc = Document(io.BytesIO(file_bytes))
+            text = "\n".join([p.text for p in doc.paragraphs]).strip()
 
-    elif uploaded_file.type == "application/pdf":
-        from PyPDF2 import PdfReader
-        reader = PdfReader(uploaded_file)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() or ""
         st.session_state.file_content = text
+        st.success("✅ File processed. (Use it as reference for questions)")
+    except Exception as e:
+        st.error(f"Failed to process uploaded file: {e}")
 
-    elif uploaded_file.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-        from docx import Document
-        doc = Document(uploaded_file)
-        text = "\n".join([p.text for p in doc.paragraphs])
-        st.session_state.file_content = text
-
-    st.success("✅ File uploaded and processed successfully!")
-
-# --- Image Upload (New Feature) ---
-uploaded_image = st.file_uploader("🖼️ Upload an image (jpg, png)", type=["jpg", "jpeg", "png"])
-image_obj = None
+# --- Upload image (jpg/png) ---
+uploaded_image = st.file_uploader("Upload an image (jpg, png) — optional", type=["jpg", "jpeg", "png"])
+image_bytes = None
 if uploaded_image is not None:
-    image_obj = Image.open(uploaded_image)
-    st.image(image_obj, caption="Uploaded Image", use_column_width=True)
+    try:
+        image_bytes = uploaded_image.read()
+        pil_img = Image.open(io.BytesIO(image_bytes))
+        st.image(pil_img, caption="Uploaded image", use_column_width=True)
+    except Exception as e:
+        st.error(f"Failed to read image: {e}")
+        image_bytes = None
 
-# --- Clear Chat Button ---
+# Clear chat
 if st.button("🗑️ Clear Chat"):
     st.session_state.chat_history = []
 
-# --- Study Mode Selection ---
-mode = st.radio(
-    "Choose a study mode:",
-    ["Explain", "Quiz", "Review"],
-    horizontal=True
-)
+# mode selector
+mode = st.radio("Choose study mode:", ["Explain", "Quiz", "Review"], horizontal=True)
 
-# --- Chat Input ---
+# input
 user_input = st.chat_input("Type your question or topic...")
 
-if user_input or image_obj:
-    # Save user message
+def call_gemini(prompt_text, image_bytes=None):
+    """Call Gemini: if image_bytes provided, send inline image part + prompt."""
+    try:
+        if image_bytes:
+            # create an image Part from raw bytes (use uploaded mime type if you know it)
+            # determine mime type from uploaded file name or default to jpeg
+            mime = uploaded_image.type if uploaded_image is not None else "image/jpeg"
+            image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime)
+            contents = [image_part, prompt_text]  # image first, then text prompt (recommended)
+            response = client.models.generate_content(model=MODEL_ID, contents=contents)
+        else:
+            response = client.models.generate_content(model=MODEL_ID, contents=prompt_text)
+        return response.text
+    except Exception as e:
+        # return a readable error so you can see Streamlit logs
+        return f"⚠️ API/error: {type(e).__name__}: {e}"
+
+if user_input or image_bytes:
+    # save user message
     if user_input:
         st.session_state.chat_history.append(("You", user_input))
-    elif image_obj:
-        st.session_state.chat_history.append(("You", "🖼️ Sent an image"))
+        query_text = user_input
+    else:
+        # if only image sent, set prompt to request explanation
+        st.session_state.chat_history.append(("You", "📷 Sent an image"))
+        query_text = "Please describe and explain this image, and give 2 short flashcards."
 
-    # Build prompt
-    context_text = st.session_state.file_content if st.session_state.file_content else ""
+    # add uploaded notes as context if available
+    context = st.session_state.file_content
     if mode == "Explain":
-        prompt = f"Explain step by step in simple terms:\n{user_input}\n\nReference Notes:\n{context_text}"
+        prompt = f"You are a friendly teacher. Explain step by step with simple examples.\n\nQuestion/Topic: {query_text}\n\nReference notes:\n{context}"
     elif mode == "Quiz":
-        prompt = f"Create 3-5 quiz questions with answers about:\n{user_input}\n\nReference Notes:\n{context_text}"
-    elif mode == "Review":
-        prompt = f"Summarize and review:\n{user_input}\n\nReference Notes:\n{context_text}"
+        prompt = f"You are a quiz master. Create 3-5 quiz questions (with answers hidden) on: {query_text}\n\nReference notes:\n{context}"
+    else:  # Review
+        prompt = f"You are a study coach. Summarize and list the key points for: {query_text}\n\nReference notes:\n{context}"
 
-    try:
-        if image_obj:
-            response = model.generate_content([prompt, image_obj])
-        else:
-            response = model.generate_content(prompt)
-        bot_reply = response.text
-    except Exception as e:
-        bot_reply = f"⚠️ Error: {e}"
+    with st.spinner("Asking Gemini..."):
+        reply = call_gemini(prompt, image_bytes=image_bytes)
+    st.session_state.chat_history.append(("Bot", reply))
 
-    st.session_state.chat_history.append(("Bot", bot_reply))
-
-# --- Chat Display ---
+# Display chat with clear distinction
 for role, msg in st.session_state.chat_history:
     if role == "You":
         st.markdown(
-            f"""
-            <div style='text-align:right; background-color:#DCF8C6; padding:10px; 
-                        border-radius:12px; margin:5px; max-width:80%; float:right; clear:both;'>
-                <b>🧑 You:</b><br>{msg}
-            </div>
-            """,
+            f"""<div style='text-align:right; background:#DCF8C6; padding:10px; border-radius:12px; margin:6px; max-width:85%; float:right; clear:both;'>
+                <b>🧑 You:</b><br>{msg}</div>""",
             unsafe_allow_html=True
         )
     else:
         st.markdown(
-            f"""
-            <div style='text-align:left; background-color:#F1F0F0; padding:10px; 
-                        border-radius:12px; margin:5px; max-width:80%; float:left; clear:both;'>
-                <b>🤖 Bot:</b><br>{msg}
-            </div>
-            """,
+            f"""<div style='text-align:left; background:#F1F0F0; padding:10px; border-radius:12px; margin:6px; max-width:85%; float:left; clear:both;'>
+                <b>🤖 Bot:</b><br>{msg}</div>""",
             unsafe_allow_html=True
         )
