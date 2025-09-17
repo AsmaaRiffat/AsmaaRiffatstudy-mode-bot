@@ -22,8 +22,8 @@ MODEL_ID = "gemini-1.5-flash"
 st.title("🎓 Smart Study Buddy")
 
 # --- Session State ---
-if "conversation" not in st.session_state:
-    st.session_state.conversation = []  # stores [{"role":"user","content":...},{"role":"model","content":...}]
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 if "file_content" not in st.session_state:
     st.session_state.file_content = ""
 
@@ -62,7 +62,7 @@ if uploaded_image is not None:
 
 # --- Clear chat ---
 if st.button("🗑️ Clear Chat"):
-    st.session_state.conversation = []
+    st.session_state.chat_history = []
 
 # --- Study Mode ---
 mode = st.radio("Choose a study mode:", ["Explain", "Quiz", "Review"], horizontal=True)
@@ -76,12 +76,10 @@ def call_gemini(prompt_text, image_bytes=None):
         if image_bytes:
             mime = uploaded_image.type if uploaded_image is not None else "image/jpeg"
             image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime)
-            text_part = types.Part.from_text(prompt_text)   # ✅ only one argument
-            contents = [image_part, text_part]
+            contents = [image_part, prompt_text]
             response = client.models.generate_content(model=MODEL_ID, contents=contents)
         else:
-            text_part = types.Part.from_text(prompt_text)   # ✅ only one argument
-            response = client.models.generate_content(model=MODEL_ID, contents=[text_part])
+            response = client.models.generate_content(model=MODEL_ID, contents=prompt_text)
         return response.text
 
     except Exception as e:
@@ -93,58 +91,37 @@ def call_gemini(prompt_text, image_bytes=None):
         else:
             return f"⚠️ Something went wrong: {error_msg}"
 
-
-        # Add image if uploaded
-        if image_bytes:
-            mime = "image/jpeg"
-            contents.append(types.Content(role="user", parts=[types.Part.from_bytes(image_bytes, mime_type=mime)]))
-
-        response = client.models.generate_content(model=MODEL_ID, contents=contents)
-        return response.text
-
-    except Exception as e:
-        error_msg = str(e)
-        if "RESOURCE_EXHAUSTED" in error_msg:
-            return "⚠️ Oops! You’ve used up today’s free quota (50 requests/day). Please try again tomorrow, or upgrade your Gemini plan."
-        elif "PERMISSION_DENIED" in error_msg:
-            return "⚠️ API key is invalid or missing permissions. Check your Google AI Studio settings."
-        else:
-            return f"⚠️ Something went wrong: {error_msg}"
-
 # --- Handle input ---
 if user_input or image_bytes:
     if user_input:
-        st.session_state.conversation.append({"role": "user", "content": user_input})
+        st.session_state.chat_history.append(("You", user_input))
         query_text = user_input
     else:
-        st.session_state.conversation.append({"role": "user", "content": "📷 Sent an image"})
+        st.session_state.chat_history.append(("You", "📷 Sent an image"))
         query_text = "Please describe and explain this image, and give 2 short flashcards."
 
     context = st.session_state.file_content
     if mode == "Explain":
-        system_prompt = f"You are a teacher. Explain this step by step in simple terms. Do not ask follow-up questions.\n\nReference notes:\n{context}"
+        prompt = f"You are a teacher. Explain this step by step in simple terms. Do not ask follow-up questions. End your response after the explanation.\n\nTopic: {query_text}\n\nReference notes:\n{context}"
     elif mode == "Quiz":
-        system_prompt = f"You are a quiz master. Create 3-5 quiz questions (answers hidden). Keep it concise.\n\nReference notes:\n{context}"
+        prompt = f"You are a quiz master. Create 3-5 quiz questions (answers hidden). Do not add anything else like 'any questions?'.\n\nTopic: {query_text}\n\nReference notes:\n{context}"
     else:  # Review
-        system_prompt = f"You are a study coach. Summarize and review this clearly. End after summary.\n\nReference notes:\n{context}"
-
-    # Insert system role at the start
-    st.session_state.conversation.append({"role": "user", "content": f"{system_prompt}\n\nTopic: {query_text}"})
+        prompt = f"You are a study coach. Summarize and review this clearly. Do not ask further questions or continue beyond the summary.\n\nTopic: {query_text}\n\nReference notes:\n{context}"
 
     with st.spinner("⏳ Thinking..."):
-        reply = call_gemini(st.session_state.conversation, image_bytes=image_bytes)
+        reply = call_gemini(prompt, image_bytes=image_bytes)
 
-    st.session_state.conversation.append({"role": "model", "content": reply})
+    st.session_state.chat_history.append(("Bot", reply))
 
 # --- Chat Display ---
-for msg in st.session_state.conversation:
-    if msg["role"] == "user":
+for role, msg in st.session_state.chat_history:
+    if role == "You":
         st.markdown(
             f"""
             <div style='text-align:right; background:#DCF8C6; color:#000000;
                         padding:10px; border-radius:12px; margin:6px; 
                         max-width:85%; float:right; clear:both;'>
-                <b>🧑 You:</b><br>{msg["content"]}
+                <b>🧑 You:</b><br>{msg}
             </div>
             """,
             unsafe_allow_html=True
@@ -155,7 +132,7 @@ for msg in st.session_state.conversation:
             <div style='text-align:left; background:#F1F0F0; color:#000000;
                         padding:10px; border-radius:12px; margin:6px; 
                         max-width:85%; float:left; clear:both;'>
-                <b>🤖 Bot:</b><br>{msg["content"]}
+                <b>🤖 Bot:</b><br>{msg}
             </div>
             """,
             unsafe_allow_html=True
