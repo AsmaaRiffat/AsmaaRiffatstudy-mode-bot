@@ -19,7 +19,7 @@ client = genai.Client(api_key=API_KEY)
 MODEL_ID = "gemini-1.5-flash"
 
 # --- Title ---
-st.title("🎓 Smart Study Buddy (Gemini)")
+st.title("🎓 Smart Study Buddy")
 
 # --- Session State ---
 if "chat_history" not in st.session_state:
