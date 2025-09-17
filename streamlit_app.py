@@ -70,18 +70,29 @@ mode = st.radio("Choose a study mode:", ["Explain", "Quiz", "Review"], horizonta
 # --- Chat Input ---
 user_input = st.chat_input("Type your question or topic...")
 
-def call_gemini(conversation, image_bytes=None):
-    """Call Gemini API with conversation history (last 5 turns)."""
+def call_gemini(prompt_text, image_bytes=None):
+    """Call Gemini API (with optional image)."""
     try:
-        contents = []
-        # keep only last 5 turns for quota saving
-        recent_turns = conversation[-5:]
+        if image_bytes:
+            mime = uploaded_image.type if uploaded_image is not None else "image/jpeg"
+            image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime)
+            text_part = types.Part.from_text(prompt_text)   # ✅ only one argument
+            contents = [image_part, text_part]
+            response = client.models.generate_content(model=MODEL_ID, contents=contents)
+        else:
+            text_part = types.Part.from_text(prompt_text)   # ✅ only one argument
+            response = client.models.generate_content(model=MODEL_ID, contents=[text_part])
+        return response.text
 
-        for msg in recent_turns:
-            if msg["role"] == "user":
-                contents.append(types.Content(role="user", parts=[types.Part.from_text(msg["content"])]))
-            else:
-                contents.append(types.Content(role="model", parts=[types.Part.from_text(msg["content"])]))
+    except Exception as e:
+        error_msg = str(e)
+        if "RESOURCE_EXHAUSTED" in error_msg:
+            return "⚠️ Oops! You’ve used up today’s free quota (50 requests/day). Please try again tomorrow, or upgrade your Gemini plan for more usage."
+        elif "PERMISSION_DENIED" in error_msg:
+            return "⚠️ API key is invalid or missing required permissions. Check your Google AI Studio settings."
+        else:
+            return f"⚠️ Something went wrong: {error_msg}"
+
 
         # Add image if uploaded
         if image_bytes:
