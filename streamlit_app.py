@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import io
 from PIL import Image
+import html
 
 from google import genai
 from google.genai import types
@@ -102,41 +103,74 @@ if user_input or image_bytes:
 
     context = st.session_state.file_content
     if mode == "Explain":
-        prompt = f"You are a teacher. Explain this step by step in simple terms. Do not ask follow-up questions. End your response after the explanation.\n\nTopic: {query_text}\n\nReference notes:\n{context}"
+        prompt = f"""
+        You are a patient teacher. Explain step by step in simple words,
+        as if teaching a complete beginner. Use clear daily-life examples
+        that make it easy to understand.
+
+        Topic: {query_text}
+        Reference notes: {context}
+        """
     elif mode == "Quiz":
-        prompt = f"You are a quiz master. Create 3-5 quiz questions (answers hidden). Do not add anything else like 'any questions?'.\n\nTopic: {query_text}\n\nReference notes:\n{context}"
+        prompt = f"""
+        You are a quiz master. Create 3-5 beginner-friendly quiz questions
+        about the topic below. For each question:
+        - Keep it simple and clear
+        - Provide ONE correct answer
+        - Explain the answer in detail like teaching to a total beginner
+        - Use practical daily-life examples
+
+        Topic: {query_text}
+        Reference notes: {context}
+        Format the output as:
+        Q: question text
+        A: answer text
+        """
     else:  # Review
-        prompt = f"You are a study coach. Summarize and review this clearly. Do not ask further questions or continue beyond the summary.\n\nTopic: {query_text}\n\nReference notes:\n{context}"
+        prompt = f"""
+        You are a helpful study coach. Summarize and review the topic below
+        in beginner-friendly language with practical daily-life examples.
+
+        Topic: {query_text}
+        Reference notes: {context}
+        """
 
     with st.spinner("⏳ Thinking..."):
-        reply = call_gemini(prompt, image_bytes=image_bytes)
+         reply = call_gemini(prompt, image_bytes=image_bytes)
 
     st.session_state.chat_history.append(("Bot", reply))
-
-import html
-
-import html
 
 # --- Chat Display ---
 for role, msg in st.session_state.chat_history:
     safe_msg = html.escape(msg).replace("\n", "<br>")  # escape HTML + keep line breaks
-    
+
     if role == "You":
         st.markdown(
-            f"""<div style='text-align:right; background:#DCF8C6; color:#000000; 
-                 padding:10px; border-radius:12px; margin:6px; 
+            f"""<div style='text-align:right; background:#DCF8C6; color:#000000;
+                 padding:10px; border-radius:12px; margin:6px;
                  max-width:85%; float:right; clear:both;'>
                  <b>🧑 You:</b><br>{safe_msg}</div>""",
             unsafe_allow_html=True
         )
     else:
-        st.markdown(
-            f"""<div style='text-align:left; background:#F1F0F0; color:#000000; 
-                 padding:10px; border-radius:12px; margin:6px; 
-                 max-width:85%; float:left; clear:both;'>
-                 <b>🤖 Bot:</b><br>{safe_msg}</div>""",
-            unsafe_allow_html=True
-        )
-
-
-
+        if mode == "Quiz" and "Q:" in msg:
+            # Special formatting for quizzes
+            questions = [q.strip() for q in msg.split("Q:") if q.strip()]
+            for q in questions:
+                if "A:" in q:
+                    q_text, a_text = q.split("A:", 1)
+                    st.markdown(f"** {q_text.strip()}**")
+                    with st.expander("Reveal Answer"):
+                        st.markdown(f"<b>Answer:</b><br>{html.escape(a_text.strip()).replace(chr(10), '<br>')}",
+                                    unsafe_allow_html=True)
+                else:
+                    st.markdown(f"** {q.strip()}**")
+        else:
+            # Normal bot response
+            st.markdown(
+                f"""<div style='text-align:left; background:#F1F0F0; color:#000000;
+                     padding:10px; border-radius:12px; margin:6px;
+                     max-width:85%; float:left; clear:both;'>
+                     <b>🤖 Bot:</b><br>{safe_msg}</div>""",
+                unsafe_allow_html=True
+            )
