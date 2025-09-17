@@ -115,29 +115,28 @@ if user_input or image_bytes:
 
 import html
 
+import html
+
 # --- Chat Display ---
 for role, msg in st.session_state.chat_history:
+    safe_msg = html.escape(msg).replace("\n", "<br>")  # escape HTML + keep line breaks
+    
     if role == "You":
         st.markdown(
-            f"""
-            <div style='text-align:right; background:#DCF8C6; color:#000000;
-                        padding:10px; border-radius:12px; margin:6px; 
-                        max-width:85%; float:right; clear:both;'>
-                <b>🧑 You:</b><br>{msg}
-            </div>
-            """,
+            f"""<div style='text-align:right; background:#DCF8C6; color:#000000; 
+                 padding:10px; border-radius:12px; margin:6px; 
+                 max-width:85%; float:right; clear:both;'>
+                 <b>🧑 You:</b><br>{safe_msg}</div>""",
             unsafe_allow_html=True
         )
     else:
         st.markdown(
-            f"""
-            <div style='text-align:left; background:#F1F0F0; color:#000000;
-                        padding:10px; border-radius:12px; margin:6px; 
-                        max-width:85%; float:left; clear:both;'>
-                <b>🤖 Bot:</b><br>{msg}
-            </div>
-            """,
+            f"""<div style='text-align:left; background:#F1F0F0; color:#000000; 
+                 padding:10px; border-radius:12px; margin:6px; 
+                 max-width:85%; float:left; clear:both;'>
+                 <b>🤖 Bot:</b><br>{safe_msg}</div>""",
             unsafe_allow_html=True
         )
+
 
 
