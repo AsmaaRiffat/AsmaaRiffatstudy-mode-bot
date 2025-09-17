@@ -137,3 +137,4 @@ for role, msg in st.session_state.chat_history:
             """,
             unsafe_allow_html=True
         )
+
