@@ -81,8 +81,15 @@ def call_gemini(prompt_text, image_bytes=None):
         else:
             response = client.models.generate_content(model=MODEL_ID, contents=prompt_text)
         return response.text
+
     except Exception as e:
-        return f"⚠️ API Error: {type(e).__name__}: {e}"
+        error_msg = str(e)
+        if "RESOURCE_EXHAUSTED" in error_msg:
+            return "⚠️ Oops! You’ve used up today’s free quota (50 requests/day). Please try again tomorrow, or upgrade your Gemini plan for more usage."
+        elif "PERMISSION_DENIED" in error_msg:
+            return "⚠️ API key is invalid or missing required permissions. Check your Google AI Studio settings."
+        else:
+            return f"⚠️ Something went wrong: {error_msg}"
 
 # --- Handle input ---
 if user_input or image_bytes:
