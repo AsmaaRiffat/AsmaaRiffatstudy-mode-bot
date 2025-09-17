@@ -8,7 +8,7 @@ from google.genai import types
 
 import pdfplumber
 from docx import Document
-import openai
+from openai import OpenAI
 
 # ---- Setup clients ----
 API_KEY_GEMINI = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -23,8 +23,7 @@ client_gemini = genai.Client(api_key=API_KEY_GEMINI) if API_KEY_GEMINI else None
 MODEL_ID_GEMINI = "gemini-1.5-flash"
 
 # OpenAI client
-if API_KEY_OPENAI:
-    openai.api_key = API_KEY_OPENAI
+client_openai = OpenAI(api_key=API_KEY_OPENAI) if API_KEY_OPENAI else None
 MODEL_ID_OPENAI = "gpt-4o-mini"  # or gpt-3.5-turbo for cheaper
 
 # --- Title ---
@@ -101,16 +100,16 @@ def call_ai(prompt_text, image_bytes=None):
             # else: fall back
 
     # --- Fall back to OpenAI ---
-    if API_KEY_OPENAI:
+    if client_openai:
         try:
-            response = openai.ChatCompletion.create(
+            response = client_openai.chat.completions.create(
                 model=MODEL_ID_OPENAI,
                 messages=[
                     {"role": "system", "content": "You are a helpful and friendly study buddy 😊. Always keep explanations clear, supportive, and engaging."},
                     {"role": "user", "content": prompt_text}
                 ]
             )
-            return response.choices[0].message["content"] + "\n\n _(Answered with OpenAI GPT)_"
+            return response.choices[0].message.content + "\n\n _(Answered with OpenAI GPT)_"
         except Exception as e2:
             return f"⚠️ OpenAI error: {e2}"
 
