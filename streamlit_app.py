@@ -9,10 +9,10 @@ from google.genai import types
 import pdfplumber
 from docx import Document
 
-# ---- Setup Gemini client ----
+# ---- Setup client ----
 API_KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
 if not API_KEY:
-    st.error("⚠️ No GEMINI_API_KEY found. Add it in Streamlit Secrets (GEMINI_API_KEY).")
+    st.error("No GEMINI_API_KEY found. Add it in Streamlit Secrets (GEMINI_API_KEY).")
     st.stop()
 
 client = genai.Client(api_key=API_KEY)
@@ -22,8 +22,8 @@ MODEL_ID = "gemini-1.5-flash"
 st.title("🎓 Smart Study Buddy")
 
 # --- Session State ---
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+if "conversation" not in st.session_state:
+    st.session_state.conversation = []  # stores [{"role":"user","content":...},{"role":"model","content":...}]
 if "file_content" not in st.session_state:
     st.session_state.file_content = ""
 
@@ -62,7 +62,7 @@ if uploaded_image is not None:
 
 # --- Clear chat ---
 if st.button("🗑️ Clear Chat"):
-    st.session_state.chat_history = []
+    st.session_state.conversation = []
 
 # --- Study Mode ---
 mode = st.radio("Choose a study mode:", ["Explain", "Quiz", "Review"], horizontal=True)
@@ -70,58 +70,70 @@ mode = st.radio("Choose a study mode:", ["Explain", "Quiz", "Review"], horizonta
 # --- Chat Input ---
 user_input = st.chat_input("Type your question or topic...")
 
-def call_gemini(prompt_text, image_bytes=None):
-    """Call Gemini API (with optional image) and handle errors gracefully."""
+def call_gemini(conversation, image_bytes=None):
+    """Call Gemini API with conversation history (last 5 turns)."""
     try:
+        contents = []
+        # keep only last 5 turns for quota saving
+        recent_turns = conversation[-5:]
+
+        for msg in recent_turns:
+            if msg["role"] == "user":
+                contents.append(types.Content(role="user", parts=[types.Part.from_text(msg["content"])]))
+            else:
+                contents.append(types.Content(role="model", parts=[types.Part.from_text(msg["content"])]))
+
+        # Add image if uploaded
         if image_bytes:
-            mime = uploaded_image.type if uploaded_image is not None else "image/jpeg"
-            image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime)
-            contents = [image_part, prompt_text]
-            response = client.models.generate_content(model=MODEL_ID, contents=contents)
-        else:
-            response = client.models.generate_content(model=MODEL_ID, contents=prompt_text)
+            mime = "image/jpeg"
+            contents.append(types.Content(role="user", parts=[types.Part.from_bytes(image_bytes, mime_type=mime)]))
+
+        response = client.models.generate_content(model=MODEL_ID, contents=contents)
         return response.text
 
     except Exception as e:
         error_msg = str(e)
         if "RESOURCE_EXHAUSTED" in error_msg:
-            return "⚠️ You’ve used up today’s free 50 requests. Please try again tomorrow, or create a new Google AI Studio project for more free usage."
+            return "⚠️ Oops! You’ve used up today’s free quota (50 requests/day). Please try again tomorrow, or upgrade your Gemini plan."
         elif "PERMISSION_DENIED" in error_msg:
-            return "⚠️ API key is invalid or missing permissions. Please check Google AI Studio settings."
+            return "⚠️ API key is invalid or missing permissions. Check your Google AI Studio settings."
         else:
             return f"⚠️ Something went wrong: {error_msg}"
 
 # --- Handle input ---
 if user_input or image_bytes:
     if user_input:
-        st.session_state.chat_history.append(("You", user_input))
+        st.session_state.conversation.append({"role": "user", "content": user_input})
         query_text = user_input
     else:
-        st.session_state.chat_history.append(("You", "📷 Sent an image"))
+        st.session_state.conversation.append({"role": "user", "content": "📷 Sent an image"})
         query_text = "Please describe and explain this image, and give 2 short flashcards."
 
     context = st.session_state.file_content
     if mode == "Explain":
-        prompt = f"You are a teacher. Explain step by step in simple terms.\n\nTopic: {query_text}\n\nReference notes:\n{context}"
+        system_prompt = f"You are a teacher. Explain this step by step in simple terms. Do not ask follow-up questions.\n\nReference notes:\n{context}"
     elif mode == "Quiz":
-        prompt = f"You are a quiz master. Create 3-5 quiz questions (with answers hidden) about:\n{query_text}\n\nReference notes:\n{context}"
+        system_prompt = f"You are a quiz master. Create 3-5 quiz questions (answers hidden). Keep it concise.\n\nReference notes:\n{context}"
     else:  # Review
-        prompt = f"You are a study coach. Summarize and review:\n{query_text}\n\nReference notes:\n{context}"
+        system_prompt = f"You are a study coach. Summarize and review this clearly. End after summary.\n\nReference notes:\n{context}"
+
+    # Insert system role at the start
+    st.session_state.conversation.append({"role": "user", "content": f"{system_prompt}\n\nTopic: {query_text}"})
 
     with st.spinner("⏳ Thinking..."):
-        reply = call_gemini(prompt, image_bytes=image_bytes)
+        reply = call_gemini(st.session_state.conversation, image_bytes=image_bytes)
 
-    st.session_state.chat_history.append(("Bot", reply))
+    st.session_state.conversation.append({"role": "model", "content": reply})
 
 # --- Chat Display ---
-for role, msg in st.session_state.chat_history:
-    if role == "You":
+for msg in st.session_state.conversation:
+    if msg["role"] == "user":
         st.markdown(
             f"""
             <div style='text-align:right; background:#DCF8C6; color:#000000;
                         padding:10px; border-radius:12px; margin:6px; 
                         max-width:85%; float:right; clear:both;'>
-                <b>🧑 You:</b><br>{msg}
+                <b>🧑 You:</b><br>{msg["content"]}
             </div>
             """,
             unsafe_allow_html=True
@@ -132,9 +144,8 @@ for role, msg in st.session_state.chat_history:
             <div style='text-align:left; background:#F1F0F0; color:#000000;
                         padding:10px; border-radius:12px; margin:6px; 
                         max-width:85%; float:left; clear:both;'>
-                <b>🤖 Bot:</b><br>{msg}
+                <b>🤖 Bot:</b><br>{msg["content"]}
             </div>
             """,
             unsafe_allow_html=True
         )
-
