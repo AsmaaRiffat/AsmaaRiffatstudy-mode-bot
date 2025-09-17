@@ -8,26 +8,18 @@ from google.genai import types
 
 import pdfplumber
 from docx import Document
-from openai import OpenAI
 
-# ---- Setup clients ----
-API_KEY_GEMINI = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
-API_KEY_OPENAI = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
-
-if not API_KEY_GEMINI and not API_KEY_OPENAI:
-    st.error("⚠️ No API keys found. Add GEMINI_API_KEY and/or OPENAI_API_KEY in Streamlit Secrets.")
+# ---- Setup Gemini client ----
+API_KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+if not API_KEY:
+    st.error("⚠️ No GEMINI_API_KEY found. Add it in Streamlit Secrets (GEMINI_API_KEY).")
     st.stop()
 
-# Gemini client
-client_gemini = genai.Client(api_key=API_KEY_GEMINI) if API_KEY_GEMINI else None
-MODEL_ID_GEMINI = "gemini-1.5-flash"
-
-# OpenAI client
-client_openai = OpenAI(api_key=API_KEY_OPENAI) if API_KEY_OPENAI else None
-MODEL_ID_OPENAI = "gpt-4o-mini"  # or gpt-3.5-turbo for cheaper
+client = genai.Client(api_key=API_KEY)
+MODEL_ID = "gemini-1.5-flash"
 
 # --- Title ---
-st.title("🎓 Smart Study Buddy")
+st.title("🎓 Smart Study Buddy (Gemini)")
 
 # --- Session State ---
 if "chat_history" not in st.session_state:
@@ -78,42 +70,26 @@ mode = st.radio("Choose a study mode:", ["Explain", "Quiz", "Review"], horizonta
 # --- Chat Input ---
 user_input = st.chat_input("Type your question or topic...")
 
-def call_ai(prompt_text, image_bytes=None):
-    """
-    Try Gemini first. If quota exceeded, fall back to OpenAI.
-    """
-    # --- Try Gemini ---
-    if client_gemini:
-        try:
-            if image_bytes:
-                mime = uploaded_image.type if uploaded_image is not None else "image/jpeg"
-                image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime)
-                contents = [image_part, prompt_text]
-                response = client_gemini.models.generate_content(model=MODEL_ID_GEMINI, contents=contents)
-            else:
-                response = client_gemini.models.generate_content(model=MODEL_ID_GEMINI, contents=prompt_text)
-            return response.text + "\n\n _(Answered with Google Gemini)_"
-        except Exception as e:
-            error_msg = str(e)
-            if "RESOURCE_EXHAUSTED" not in error_msg:
-                return f"⚠️ Gemini error: {error_msg}"
-            # else: fall back
+def call_gemini(prompt_text, image_bytes=None):
+    """Call Gemini API (with optional image) and handle errors gracefully."""
+    try:
+        if image_bytes:
+            mime = uploaded_image.type if uploaded_image is not None else "image/jpeg"
+            image_part = types.Part.from_bytes(data=image_bytes, mime_type=mime)
+            contents = [image_part, prompt_text]
+            response = client.models.generate_content(model=MODEL_ID, contents=contents)
+        else:
+            response = client.models.generate_content(model=MODEL_ID, contents=prompt_text)
+        return response.text
 
-    # --- Fall back to OpenAI ---
-    if client_openai:
-        try:
-            response = client_openai.chat.completions.create(
-                model=MODEL_ID_OPENAI,
-                messages=[
-                    {"role": "system", "content": "You are a helpful and friendly study buddy 😊. Always keep explanations clear, supportive, and engaging."},
-                    {"role": "user", "content": prompt_text}
-                ]
-            )
-            return response.choices[0].message.content + "\n\n _(Answered with OpenAI GPT)_"
-        except Exception as e2:
-            return f"⚠️ OpenAI error: {e2}"
-
-    return "⚠️ No available AI service. Please check your API keys."
+    except Exception as e:
+        error_msg = str(e)
+        if "RESOURCE_EXHAUSTED" in error_msg:
+            return "⚠️ You’ve used up today’s free 50 requests. Please try again tomorrow, or create a new Google AI Studio project for more free usage."
+        elif "PERMISSION_DENIED" in error_msg:
+            return "⚠️ API key is invalid or missing permissions. Please check Google AI Studio settings."
+        else:
+            return f"⚠️ Something went wrong: {error_msg}"
 
 # --- Handle input ---
 if user_input or image_bytes:
@@ -133,7 +109,7 @@ if user_input or image_bytes:
         prompt = f"You are a study coach. Summarize and review:\n{query_text}\n\nReference notes:\n{context}"
 
     with st.spinner("⏳ Thinking..."):
-        reply = call_ai(prompt, image_bytes=image_bytes)
+        reply = call_gemini(prompt, image_bytes=image_bytes)
 
     st.session_state.chat_history.append(("Bot", reply))
 
